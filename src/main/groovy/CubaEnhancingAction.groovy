@@ -172,6 +172,17 @@ class CubaEnhancingAction implements Action<Task> {
                     cubaEnhancer.run(className)
                 }
             }
+
+            // After compiling empty CubaEnhancedSetGet methods at first run implementing it here
+            for (className in allClasses) {
+                def classFileName = className.replace('.', '/') + '.class'
+                def classFile = new File(javaOutputDir, classFileName)
+
+                if (classFile.exists()) {
+                    // skip files from dependencies, enhance only classes from `javaOutputDir`
+                    cubaEnhancer.enhanceSetGet(className)
+                }
+            }
         }
 
         return allClasses
