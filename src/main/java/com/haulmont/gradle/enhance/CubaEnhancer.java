@@ -28,6 +28,7 @@ import org.gradle.api.logging.Logger;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -40,6 +41,7 @@ public class CubaEnhancer {
 
     protected static final String METAPROPERTY_ANNOTATION = "com.haulmont.chile.core.annotations.MetaProperty";
     protected static final String ABSTRACT_INSTANCE_TYPE = "com.haulmont.chile.core.model.impl.AbstractInstance";
+    protected static final String PERSISTENT_ENTITY_TYPE = "com.haulmont.cuba.core.entity.PersistentEntity";
 
     protected org.gradle.api.logging.Logger log;
 
@@ -59,13 +61,24 @@ public class CubaEnhancer {
         try {
             CtClass cc = pool.get(className);
 
+            boolean isPersistentEntity = false;
             CtClass superclass = cc.getSuperclass();
             while (superclass != null && !superclass.getName().equals(ABSTRACT_INSTANCE_TYPE)) {
                 superclass = superclass.getSuperclass();
             }
+
             if (superclass == null) {
-                log.info("[CubaEnhancer] " + className + " is not an AbstractInstance and should not be enhanced");
-                return;
+                isPersistentEntity = isPersistentEntity(cc);
+                if (!isPersistentEntity) {
+                    superclass = cc.getSuperclass();
+                    while (superclass != null && !(isPersistentEntity = isPersistentEntity(superclass))) {
+                        superclass = superclass.getSuperclass();
+                    }
+                    if (superclass == null) {
+                        log.info("[CubaEnhancer] " + className + " is not an AbstractInstance/PersistentEntity and should not be enhanced");
+                        return;
+                    }
+                }
             }
 
             for (CtClass intf : cc.getInterfaces()) {
@@ -77,7 +90,7 @@ public class CubaEnhancer {
             }
 
             log.info("[CubaEnhancer] enhancing " + className);
-            enhanceSetters(cc);
+            enhanceSetters(cc, isPersistentEntity);
 
             enhanceBeanValidationMessages(cc);
 
@@ -90,7 +103,11 @@ public class CubaEnhancer {
         }
     }
 
-    protected void enhanceSetters(CtClass ctClass) throws NotFoundException, CannotCompileException {
+    protected boolean isPersistentEntity(CtClass cc) throws NotFoundException {
+        return Arrays.stream(cc.getInterfaces()).anyMatch(intf -> PERSISTENT_ENTITY_TYPE.equals(intf.getName()));
+    }
+
+    protected void enhanceSetters(CtClass ctClass, boolean persistentEntity) throws NotFoundException, CannotCompileException {
         for (CtMethod ctMethod : ctClass.getDeclaredMethods()) {
             final String name = ctMethod.getName();
             if (Modifier.isAbstract(ctMethod.getModifiers())
@@ -145,12 +162,21 @@ public class CubaEnhancer {
                     "__prev = this.get" + StringUtils.capitalize(fieldName) + "();"
             );
 
-            ctMethod.insertAfter(
-                    "__new = this.get" + StringUtils.capitalize(fieldName) + "();" +
-                    "if (!com.haulmont.chile.core.model.utils.InstanceUtils.propertyValueEquals(__prev, __new)) {" +
-                    "  this.propertyChanged(\"" + fieldName + "\", __prev, __new);" +
-                    "}"
-            );
+            if (persistentEntity) {
+                ctMethod.insertAfter(
+                        "__new = this.get" + StringUtils.capitalize(fieldName) + "();" +
+                                "if (!com.haulmont.chile.core.model.utils.InstanceUtils.propertyValueEquals(__prev, __new)) {" +
+                                "  this.getListenersHolder().firePropertyChanged(this,\"" + fieldName + "\", __prev, __new);" +
+                                "}"
+                );
+            } else {
+                ctMethod.insertAfter(
+                        "__new = this.get" + StringUtils.capitalize(fieldName) + "();" +
+                                "if (!com.haulmont.chile.core.model.utils.InstanceUtils.propertyValueEquals(__prev, __new)) {" +
+                                "  this.propertyChanged(\"" + fieldName + "\", __prev, __new);" +
+                                "}"
+                );
+            }
         }
     }
 

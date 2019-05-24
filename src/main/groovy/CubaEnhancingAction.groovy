@@ -35,6 +35,7 @@ import java.util.regex.Pattern
 class CubaEnhancingAction implements Action<Task> {
 
     protected static final String ABSTRACT_INSTANCE_FQN = 'com.haulmont.chile.core.model.impl.AbstractInstance'
+    protected static final String PERSISTENT_ENTITY_FQN = 'com.haulmont.cuba.core.entity.PersistentEntity'
 
     protected final Project project
 
@@ -110,6 +111,7 @@ class CubaEnhancingAction implements Action<Task> {
         allClasses.addAll(getTransientEntities())
         // AbstractInstance is not registered but shouldn't be deleted
         allClasses.add(ABSTRACT_INSTANCE_FQN)
+        allClasses.add(PERSISTENT_ENTITY_FQN)
 
         if (enhancedDir.exists()) {
             enhancedDir.eachFileRecurse(FileType.FILES) { File file ->
