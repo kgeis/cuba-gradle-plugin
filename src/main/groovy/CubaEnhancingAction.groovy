@@ -74,7 +74,11 @@ class CubaEnhancingAction implements Action<Task> {
         List<String> allClasses = []
 
         def javaOutputDir = getEntityClassesDir()
+
+        File kotlinOutputDir = new File(javaOutputDir.getAbsolutePath().replace('\\main', '\\kotlin\\main'))
+
         def enhancedDir = new File(enhancedDirPath)
+        def enhanceKotlinDir = new File(enhancedKotlinDirPath)
 
         project.logger.info('[CubaEnhancing] Entity classes directory: ' + javaOutputDir.absolutePath)
 
@@ -97,6 +101,25 @@ class CubaEnhancingAction implements Action<Task> {
                 args "$project.buildDir/tmp/persistence"
                 args "$javaOutputDir"
                 args enhancedDirPath
+                debug = System.getProperty("debugEnhance") ? Boolean.valueOf(System.getProperty("debugEnhance")) : false
+            }
+        }
+
+        if (kotlinOutputDir.exists()) {
+            project.logger.info("[CubaEnhancing] Start EclipseLink enhancing")
+            project.javaexec {
+                main = 'org.eclipse.persistence.tools.weaving.jpa.CubaStaticWeave'
+                classpath(
+                        sourceSet.compileClasspath,
+                        kotlinOutputDir,
+                        javaOutputDir
+                )
+                args "-loglevel"
+                args "INFO"
+                args "-persistenceinfo"
+                args "$project.buildDir/tmp/persistence"
+                args "$kotlinOutputDir"
+                args enhancedKotlinDirPath
                 debug = System.getProperty("debugEnhance") ? Boolean.valueOf(System.getProperty("debugEnhance")) : false
             }
         }
@@ -162,11 +185,65 @@ class CubaEnhancingAction implements Action<Task> {
             }
         }
 
+        if (enhanceKotlinDir.exists()) {
+            enhanceKotlinDir.eachFileRecurse(FileType.FILES) { File file ->
+                Path path = enhanceKotlinDir.toPath().relativize(file.toPath())
+                String name = path.findAll().join('.')
+                name = name.substring(0, name.lastIndexOf('.'))
+                if (!allClasses.contains(name)) {
+                    file.delete()
+                }
+            }
+            // delete empty dirs
+            List<File> emptyDirs = []
+            enhanceKotlinDir.eachDirRecurse { File dir ->
+                if (dir.listFiles({ File file -> !file.isDirectory() } as FileFilter).toList().isEmpty()) {
+                    emptyDirs.add(dir)
+                }
+            }
+            emptyDirs.reverse().each { File dir ->
+                if (dir.listFiles().toList().isEmpty()) {
+                    dir.delete()
+                }
+            }
+        }
+
+        if (enhanceKotlinDir.exists()) {
+            // run CUBA enhancing on all classes remaining in build/tmp/enhance-${classesRoot}
+            project.logger.info("[CubaEnhancing] Start CUBA enhancing")
+
+            ClassPool pool = new ClassPool(null)
+            pool.appendSystemPath()
+
+            for (file in sourceSet.compileClasspath) {
+                pool.insertClassPath(file.getAbsolutePath())
+            }
+
+            pool.insertClassPath(javaOutputDir.getAbsolutePath())
+            pool.insertClassPath(enhanceKotlinDir.getAbsolutePath())
+            pool.insertClassPath(enhancedDir.getAbsolutePath())
+
+            def cubaEnhancer = new CubaEnhancer(pool, enhanceKotlinDir.getAbsolutePath())
+            cubaEnhancer.logger = project.logger
+
+            for (className in allClasses) {
+                def classFileName = className.replace('.', '/') + '.class'
+                def classFile = new File(kotlinOutputDir, classFileName)
+
+                if (classFile.exists()) {
+                    // skip files from dependencies, enhance only classes from `javaOutputDir`
+                    cubaEnhancer.run(className)
+                }
+            }
+        }
+
+
         return allClasses
     }
 
     def replaceClasses(List<String> enhancedClassesFqn) {
         def javaOutputDir = getEntityClassesDir()
+        File kotlinOutputDir = new File(javaOutputDir.getAbsolutePath().replace('\\main', '\\kotlin\\main'))
 
         enhancedClassesFqn.each { String classFqn ->
             def classPath = classFqn.replace('.', '/')
@@ -183,6 +260,25 @@ class CubaEnhancingAction implements Action<Task> {
             FileUtils.deleteDirectory(new File(enhancedDirPath))
         } catch (IOException ignored) {
             project.logger.debug("Unable to remove directory with enhanced classes: $enhancedDirPath")
+        }
+
+        if (kotlinOutputDir.exists()) {
+            enhancedClassesFqn.each { String classFqn ->
+                def classPath = classFqn.replace('.', '/')
+
+                Path srcFile = Paths.get("$enhancedKotlinDirPath/${classPath}.class")
+                Path dstFile = Paths.get("$kotlinOutputDir/${classPath}.class")
+
+                if (srcFile.toFile().exists() && dstFile.toFile().exists()) {
+                    Files.copy(srcFile, dstFile, StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
+
+            try {
+                FileUtils.deleteDirectory(new File(enhancedKotlinDirPath))
+            } catch (IOException ignored) {
+                project.logger.debug("Unable to remove directory with enhanced classes: $enhancedKotlinDirPath")
+            }
         }
     }
 
@@ -325,5 +421,9 @@ class CubaEnhancingAction implements Action<Task> {
 
     private String getEnhancedDirPath() {
         return "${project.buildDir}/tmp/enhance-${classesRoot}"
+    }
+
+    private String getEnhancedKotlinDirPath() {
+        return "${project.buildDir}/tmp/enhance-kotlin-${classesRoot}"
     }
 }
