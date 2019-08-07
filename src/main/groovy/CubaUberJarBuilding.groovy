@@ -20,12 +20,16 @@ import com.haulmont.gradle.project.Projects
 import com.haulmont.gradle.uberjar.*
 import com.haulmont.gradle.utils.FrontUtils
 import com.haulmont.gradle.utils.SdkVersions
+import org.apache.commons.io.FileUtils
+import org.apache.commons.io.IOUtils
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.tasks.*
 import org.gradle.jvm.tasks.Jar
 import org.gradle.language.base.plugins.LifecycleBasePlugin
+
+import java.nio.charset.StandardCharsets
 
 class CubaUberJarBuilding extends DefaultTask {
 
@@ -639,8 +643,21 @@ class CubaUberJarBuilding extends DefaultTask {
         return jarName && jarName.contains('web-toolkit') && jarName.contains('-client')
     }
 
+    protected void modifyWebXmlProperties(Project theProject) {
+        try {
+            File webXml = new File("${getWebXmlPath(theProject)}")
+            String content = IOUtils.toString(webXml.getBytes(), StandardCharsets.UTF_8.toString())
+            content = content.replaceAll("catalina.base", "app.home")
+            FileUtils.writeByteArrayToFile(webXml, content.getBytes(StandardCharsets.UTF_8))
+            IOUtils.write(content, new FileOutputStream(webXml), StandardCharsets.UTF_8)
+        } catch (IOException e) {
+            throw new RuntimeException("Can't modify system properties in the ${getWebXmlPath(theProject)} file", e)
+        }
+    }
+
     protected void copyWebInfContent(Project theProject) {
         theProject.logger.info("[CubaUberJAR] Copy WEB-INF content for ${theProject}")
+        modifyWebXmlProperties(theProject)
         String webXmlPath
         if (coreWebXmlPath && theProject == coreProject) {
             webXmlPath = coreWebXmlPath
@@ -870,6 +887,19 @@ class CubaUberJarBuilding extends DefaultTask {
             return "LIB-INF/$PORTAL_CONTENT_DIR_IN_JAR"
         } else if (theProject == frontProject) {
             return "LIB-INF/$FRONT_CONTENT_DIR_IN_JAR"
+        }
+        return null
+    }
+
+    protected String getWebXmlPath(Project theProject) {
+        if (theProject == coreProject) {
+            return "${project.projectDir}/modules/core/web/WEB-INF/web.xml"
+        } else if (theProject == webProject) {
+            return "${project.projectDir}/modules/web/web/WEB-INF/web.xml"
+        } else if (theProject == portalProject) {
+            return "${project.projectDir}/modules/portal/web/WEB-INF/web.xml"
+        } else if (theProject == frontProject) {
+            return "${project.projectDir}/modules/front/web/WEB-INF/web.xml"
         }
         return null
     }
