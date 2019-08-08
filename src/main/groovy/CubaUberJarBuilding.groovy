@@ -20,6 +20,7 @@ import com.haulmont.gradle.project.Projects
 import com.haulmont.gradle.uberjar.*
 import com.haulmont.gradle.utils.FrontUtils
 import com.haulmont.gradle.utils.SdkVersions
+import groovy.xml.XmlUtil
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Project
@@ -478,6 +479,7 @@ class CubaUberJarBuilding extends DefaultTask {
         writeLibsFile(theProject, resolvedLibs)
 
         touchWebXml(theProject)
+        modifyWebXmlProperties(theProject)
     }
 
     protected void copyFrontLibsAndContent(Project theProject, Set<String> resolvedLibs) {
@@ -640,29 +642,30 @@ class CubaUberJarBuilding extends DefaultTask {
     }
 
     protected void modifyWebXmlProperties(Project theProject) {
-        File webXml = new File("${getWebXmlPath(theProject)}")
-        def xml
-        try {
-            xml = new XmlParser().parse(webXml)
-        } catch (Exception ignored) {
-            throw new GradleException("web.xml parsing error")
-        }
+        def webXmlPath = getWebXmlPath(theProject)
+        if (webXmlPath) {
+            File webXml = new File(webXmlPath)
+            def xml
+            try {
+                xml = new XmlSlurper().parse(webXml)
+            } catch (Exception ignored) {
+                throw new GradleException("web.xml parsing error")
+            }
 
-        xml.'context-param'.each{
-            param->
-                if (param.'param-name'=='appPropertiesConfig'){
-                    param.'param-value' = param.'param-value'.replaceAll("catalina.base", "app.home")
-                }
-        }
+            xml.'context-param'.each {
+                param ->
+                    if (param.'param-name' == 'appPropertiesConfig') {
+                        param.'param-value' = param.'param-value'.text().replaceAll("catalina.base", "app.home")
+                    }
+            }
 
-        def printer = new XmlNodePrinter(new PrintWriter(new FileWriter(webXml)))
-        printer.preserveWhitespace = true
-        printer.print(xml)
+            XmlUtil xmlUtil = new XmlUtil()
+            xmlUtil.serialize(xml, new FileWriter(webXml))
+        }
     }
 
     protected void copyWebInfContent(Project theProject) {
         theProject.logger.info("[CubaUberJAR] Copy WEB-INF content for ${theProject}")
-        modifyWebXmlProperties(theProject)
         String webXmlPath
         if (coreWebXmlPath && theProject == coreProject) {
             webXmlPath = coreWebXmlPath
@@ -897,20 +900,14 @@ class CubaUberJarBuilding extends DefaultTask {
     }
 
     protected String getWebXmlPath(Project theProject) {
-        if (theProject == coreProject) {
-            return "${project.projectDir}/modules/core/web/WEB-INF/web.xml"
-        } else if (theProject == webProject) {
-            return "${project.projectDir}/modules/web/web/WEB-INF/web.xml"
-        } else if (theProject == portalProject) {
-            return "${project.projectDir}/modules/portal/web/WEB-INF/web.xml"
-        } else if (theProject == frontProject) {
-            return "${project.projectDir}/modules/front/web/WEB-INF/web.xml"
+        if (theProject == coreProject || theProject == webProject || theProject == portalProject) {
+            return "${getContentDir(theProject)}/WEB-INF/web.xml"
         }
         return null
     }
 
     protected void touchWebXml(Project theProject) {
-        def webXml = new File("${getContentDir(theProject)}/WEB-INF/web.xml")
+        def webXml = new File(getWebXmlPath(theProject))
         if (!webXml.exists()) {
             throw new GradleException("$webXml doesn't exists")
         }
