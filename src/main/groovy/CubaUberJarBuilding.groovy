@@ -642,26 +642,23 @@ class CubaUberJarBuilding extends DefaultTask {
     }
 
     protected void modifyWebXmlProperties(Project theProject) {
-        def webXmlPath = getWebXmlPath(theProject)
-        if (webXmlPath) {
-            File webXml = new File(webXmlPath)
-            def xml
-            try {
-                xml = new XmlSlurper().parse(webXml)
-            } catch (Exception ignored) {
-                throw new GradleException("web.xml parsing error")
-            }
-
-            xml.'context-param'.each {
-                param ->
-                    if (param.'param-name' == 'appPropertiesConfig') {
-                        param.'param-value' = param.'param-value'.text().replaceAll("catalina.base", "app.home")
-                    }
-            }
-
-            XmlUtil xmlUtil = new XmlUtil()
-            xmlUtil.serialize(xml, new FileWriter(webXml))
+        File webXml = new File(getWebXmlPath(theProject))
+        def xml
+        try {
+            xml = new XmlSlurper().parse(webXml)
+        } catch (Exception ignored) {
+            throw new GradleException("web.xml parsing error")
         }
+
+        xml.'context-param'.each {
+            param ->
+                if (param.'param-name' == 'appPropertiesConfig') {
+                    param.'param-value' = param.'param-value'.text().replaceAll("catalina.base", "app.home")
+                }
+        }
+
+        XmlUtil xmlUtil = new XmlUtil()
+        xmlUtil.serialize(xml, new FileWriter(webXml))
     }
 
     protected void copyWebInfContent(Project theProject) {
@@ -900,10 +897,7 @@ class CubaUberJarBuilding extends DefaultTask {
     }
 
     protected String getWebXmlPath(Project theProject) {
-        if (theProject == coreProject || theProject == webProject || theProject == portalProject) {
-            return "${getContentDir(theProject)}/WEB-INF/web.xml"
-        }
-        return null
+        return "${getContentDir(theProject)}/WEB-INF/web.xml"
     }
 
     protected void touchWebXml(Project theProject) {
