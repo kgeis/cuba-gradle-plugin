@@ -20,16 +20,12 @@ import com.haulmont.gradle.project.Projects
 import com.haulmont.gradle.uberjar.*
 import com.haulmont.gradle.utils.FrontUtils
 import com.haulmont.gradle.utils.SdkVersions
-import org.apache.commons.io.FileUtils
-import org.apache.commons.io.IOUtils
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.tasks.*
 import org.gradle.jvm.tasks.Jar
 import org.gradle.language.base.plugins.LifecycleBasePlugin
-
-import java.nio.charset.StandardCharsets
 
 class CubaUberJarBuilding extends DefaultTask {
 
@@ -644,15 +640,24 @@ class CubaUberJarBuilding extends DefaultTask {
     }
 
     protected void modifyWebXmlProperties(Project theProject) {
+        File webXml = new File("${getWebXmlPath(theProject)}")
+        def xml
         try {
-            File webXml = new File("${getWebXmlPath(theProject)}")
-            String content = IOUtils.toString(webXml.getBytes(), StandardCharsets.UTF_8.toString())
-            content = content.replaceAll("catalina.base", "app.home")
-            FileUtils.writeByteArrayToFile(webXml, content.getBytes(StandardCharsets.UTF_8))
-            IOUtils.write(content, new FileOutputStream(webXml), StandardCharsets.UTF_8)
-        } catch (IOException e) {
-            throw new RuntimeException("Can't modify system properties in the ${getWebXmlPath(theProject)} file", e)
+            xml = new XmlParser().parse(webXml)
+        } catch (Exception ignored) {
+            throw new GradleException("web.xml parsing error")
         }
+
+        xml.'context-param'.each{
+            param->
+                if (param.'param-name'=='appPropertiesConfig'){
+                    param.'param-value' = param.'param-value'.replaceAll("catalina.base", "app.home")
+                }
+        }
+
+        def printer = new XmlNodePrinter(new PrintWriter(new FileWriter(webXml)))
+        printer.preserveWhitespace = true
+        printer.print(xml)
     }
 
     protected void copyWebInfContent(Project theProject) {
