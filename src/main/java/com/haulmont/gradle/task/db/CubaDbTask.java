@@ -20,22 +20,38 @@ import groovy.lang.GroovyObject;
 import groovy.sql.Sql;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.input.BOMInputStream;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.tools.ant.types.Resource;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
 
-import java.io.File;
-import java.io.FilenameFilter;
-import java.io.IOException;
+import java.io.*;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.*;
+import org.apache.commons.text.StringSubstitutor;
+import org.apache.commons.text.StringTokenizer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
+
+import javax.annotation.Nullable;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -66,6 +82,8 @@ public abstract class CubaDbTask extends DefaultTask {
     protected String timeStampType;
     protected File dbDir;
     protected Sql sqlInstance;
+
+    private final Logger log = LoggerFactory.getLogger(CubaDbTask.class);
 
     public String getDbms() {
         return dbms;
@@ -180,6 +198,51 @@ public abstract class CubaDbTask extends DefaultTask {
     }
 
     protected void init() {
+        Properties properties = initProperties();
+        String dataSourceProvider = properties.getProperty("cuba.dataSourceProvider");
+        if (dataSourceProvider != null && dataSourceProvider.equals("APPLICATION")) {
+            initApplicationDataSource(properties);
+        } else {
+            initDefaultDataSource();
+        }
+
+        Project project = getProject();
+        dbDir = new File(project.getBuildDir(), dbFolder);
+
+        ClassLoader classLoader = GroovyObject.class.getClassLoader();
+        if (StringUtils.isBlank(driverClasspath)) {
+            driverClasspath = project.getConfigurations().getByName("jdbc").fileCollection(dependency -> true).getAsPath();
+            project.getConfigurations().getByName("jdbc").fileCollection(dependency -> true).getFiles()
+                    .forEach(file -> {
+                        try {
+                            Method addURLMethod = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
+                            addURLMethod.setAccessible(true);
+                            addURLMethod.invoke(classLoader, file.toURI().toURL());
+                        } catch (NoSuchMethodException | IllegalAccessException
+                                | InvocationTargetException | MalformedURLException e) {
+                            throw new GradleException("Exception when invoke 'java.net.URLClassLoader.addURL' method", e);
+                        }
+
+                    });
+        } else {
+            java.util.StringTokenizer tokenizer = new java.util.StringTokenizer(driverClasspath, File.pathSeparator);
+            while (tokenizer.hasMoreTokens()) {
+                try {
+                    URL url = new File(tokenizer.nextToken()).toURI().toURL();
+                    Method addURLMethod = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
+                    addURLMethod.setAccessible(true);
+                    addURLMethod.invoke(classLoader, url);
+                } catch (NoSuchMethodException | IllegalAccessException
+                        | InvocationTargetException | MalformedURLException e) {
+                    throw new GradleException("Exception when invoke 'java.net.URLClassLoader.addURL' method", e);
+                }
+            }
+        }
+        project.getLogger().info("[CubaDbTask] driverClasspath: " + driverClasspath);
+
+    }
+
+    protected void initDefaultDataSource() {
         if (StringUtils.isBlank(driver) || StringUtils.isBlank(dbUrl)) {
             if (POSTGRES_DBMS.equals(dbms)) {
                 driver = "org.postgresql.Driver";
@@ -223,41 +286,37 @@ public abstract class CubaDbTask extends DefaultTask {
                 throw new UnsupportedOperationException("DBMS " + dbms + " is not supported. " +
                         "You should either provide 'driver' and 'dbUrl' properties, or specify one of supported DBMS in 'dbms' property");
         }
+    }
 
-        Project project = getProject();
-        dbDir = new File(project.getBuildDir(), dbFolder);
+    protected void initApplicationDataSource(Properties properties) {
+        dbUrl = properties.getProperty("cuba.dataSource.jdbcUrl");
+        dbUser = properties.getProperty("cuba.dataSource.username");
+        dbPassword = properties.getProperty("cuba.dataSource.password");
 
-        ClassLoader classLoader = GroovyObject.class.getClassLoader();
-        if (StringUtils.isBlank(driverClasspath)) {
-            driverClasspath = project.getConfigurations().getByName("jdbc").fileCollection(dependency -> true).getAsPath();
-            project.getConfigurations().getByName("jdbc").fileCollection(dependency -> true).getFiles()
-                    .forEach(file -> {
-                        try {
-                            Method addURLMethod = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
-                            addURLMethod.setAccessible(true);
-                            addURLMethod.invoke(classLoader, file.toURI().toURL());
-                        } catch (NoSuchMethodException | IllegalAccessException
-                                | InvocationTargetException | MalformedURLException e) {
-                            throw new GradleException("Exception when invoke 'java.net.URLClassLoader.addURL' method", e);
-                        }
-
-                    });
+        if(dbUrl.contains("jdbc:postgresql://")) {
+            driver = "org.postgresql.Driver";
+            dbms = POSTGRES_DBMS;
+        } else if (dbUrl.contains("jdbc:jtds:sqlserver://")) {
+            driver = "net.sourceforge.jtds.jdbc.Driver";
+            dbms = MSSQL_DBMS;
+            dbmsVersion = MS_SQL_2005;
+        } else if (dbUrl.contains("jdbc:sqlserver://")) {
+            driver = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
+            dbms = MSSQL_DBMS;
+        } else if (dbUrl.contains("jdbc:oracle:thin:@//")) {
+            driver = "oracle.jdbc.OracleDriver";
+            dbms = ORACLE_DBMS;
+        } else if (dbUrl.contains("jdbc:hsqldb:hsql://")) {
+            driver = "org.hsqldb.jdbc.JDBCDriver";
+            dbms = HSQL_DBMS;
+        } else if (dbUrl.contains("jdbc:mysql://")) {
+            driver = "com.mysql.jdbc.Driver";
+            dbms = MYSQL_DBMS;
+            dbUrl = dbUrl + "?useSSL=false&allowMultiQueries=true&serverTimezone=UTC";
         } else {
-            StringTokenizer tokenizer = new StringTokenizer(driverClasspath, File.pathSeparator);
-            while (tokenizer.hasMoreTokens()) {
-                try {
-                    URL url = new File(tokenizer.nextToken()).toURI().toURL();
-                    Method addURLMethod = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
-                    addURLMethod.setAccessible(true);
-                    addURLMethod.invoke(classLoader, url);
-                } catch (NoSuchMethodException | IllegalAccessException
-                        | InvocationTargetException | MalformedURLException e) {
-                    throw new GradleException("Exception when invoke 'java.net.URLClassLoader.addURL' method", e);
-                }
-            }
+            throw new UnsupportedOperationException("DBMS " + dbms + " is not supported. " +
+                    "You should either provide 'driver' and 'dbUrl' properties, or specify one of supported DBMS in 'dbms' property");
         }
-        project.getLogger().info("[CubaDbTask] driverClasspath: " + driverClasspath);
-
     }
 
     protected void initDatabase(String oneModuleDir) {
@@ -288,6 +347,84 @@ public abstract class CubaDbTask extends DefaultTask {
                 String name = getScriptName(file);
                 markScript(name, true);
             });
+        }
+    }
+
+    protected Properties initProperties() {
+        String propsConfigName = getPropsConfigName();
+       // if (propsConfigName == null)
+       //     throw new IllegalStateException(APP_PROPS_CONFIG_PARAM + " servlet context parameter not defined");
+
+        final Properties properties = new Properties();
+
+        StringTokenizer tokenizer = new StringTokenizer(propsConfigName);
+        tokenizer.setQuoteChar('"');
+        for (String str : tokenizer.getTokenArray()) {
+            if (str.startsWith("classpath:")) {
+                try (InputStream stream = getPropertiesInputStream(str)) {
+                    if (stream != null) {
+                        log.info("Loading app properties from {}", str);
+                        BOMInputStream bomInputStream = new BOMInputStream(stream);
+                        try (Reader reader = new InputStreamReader(bomInputStream, StandardCharsets.UTF_8)) {
+                            properties.load(reader);
+                        }
+                    } else {
+                        log.trace("Resource {} not found, ignore it", str);
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException("Unable to read properties from stream", e);
+                }
+            }
+        }
+        return properties;
+    }
+
+    protected InputStream getPropertiesInputStream(String classpath) {
+        File jarFolder = new File("text_directory");
+
+        File [] jarFiles = jarFolder.listFiles(file -> file.getName().endsWith(".jar"));
+
+        return null;
+    }
+
+    protected String getPropsConfigName() {
+        // get properties from a set of app.properties files defined in web.xml
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder builder;
+        Document document;
+        try {
+            builder = factory.newDocumentBuilder();
+            String webXml = "modules/core/web/WEB-INF/web.xml";
+            document = builder.parse(new File(StringSubstitutor.replaceSystemProperties(webXml)));
+        } catch (SAXException | ParserConfigurationException | IOException e) {
+            throw new RuntimeException("Can't get properties files names from core web.xml", e);
+        }
+        //document.getDocumentElement().normalize();
+        NodeList nList = document.getElementsByTagName("context-param");
+        for (int i = 0; i < nList.getLength(); i++) {
+            Element nNode = (Element) nList.item(i);
+            Node paramName = nNode.getElementsByTagName("param-name").item(0);
+            String nodeValue = paramName.getTextContent();
+            if ("appPropertiesConfig".equals(nodeValue)) {
+                return nNode.getElementsByTagName("param-value").item(0).getTextContent();
+            }
+        }
+        return null;
+    }
+
+    protected boolean isUrl(@Nullable String resourceLocation) {
+        if (resourceLocation == null) {
+            return false;
+        }
+        if (resourceLocation.startsWith("classpath:")) {
+            return true;
+        }
+        try {
+            new URL(resourceLocation);
+            return true;
+        }
+        catch (MalformedURLException ex) {
+            return false;
         }
     }
 
