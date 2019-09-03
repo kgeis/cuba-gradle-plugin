@@ -20,10 +20,8 @@ import groovy.lang.GroovyObject;
 import groovy.sql.Sql;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.io.input.BOMInputStream;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.tools.ant.types.Resource;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
@@ -200,7 +198,7 @@ public abstract class CubaDbTask extends DefaultTask {
     protected void init() {
         Properties properties = initProperties();
         String dataSourceProvider = properties.getProperty("cuba.dataSourceProvider");
-        if (dataSourceProvider != null && dataSourceProvider.equals("APPLICATION")) {
+        if ("APPLICATION".equals(dataSourceProvider)) {
             initApplicationDataSource(properties);
         } else {
             initDefaultDataSource();
@@ -292,27 +290,34 @@ public abstract class CubaDbTask extends DefaultTask {
         dbUrl = properties.getProperty("cuba.dataSource.jdbcUrl");
         dbUser = properties.getProperty("cuba.dataSource.username");
         dbPassword = properties.getProperty("cuba.dataSource.password");
+        dbName = properties.getProperty("cuba.dataSource.dbName");
 
-        if(dbUrl.contains("jdbc:postgresql://")) {
+        if (dbUrl.contains("jdbc:postgresql://")) {
             driver = "org.postgresql.Driver";
             dbms = POSTGRES_DBMS;
+            timeStampType = "timestamp";
         } else if (dbUrl.contains("jdbc:jtds:sqlserver://")) {
             driver = "net.sourceforge.jtds.jdbc.Driver";
             dbms = MSSQL_DBMS;
             dbmsVersion = MS_SQL_2005;
+            timeStampType = "datetime";
         } else if (dbUrl.contains("jdbc:sqlserver://")) {
             driver = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
             dbms = MSSQL_DBMS;
+            timeStampType = "datetime";
         } else if (dbUrl.contains("jdbc:oracle:thin:@//")) {
             driver = "oracle.jdbc.OracleDriver";
             dbms = ORACLE_DBMS;
+            timeStampType = "timestamp";
         } else if (dbUrl.contains("jdbc:hsqldb:hsql://")) {
             driver = "org.hsqldb.jdbc.JDBCDriver";
             dbms = HSQL_DBMS;
+            timeStampType = "timestamp";
         } else if (dbUrl.contains("jdbc:mysql://")) {
             driver = "com.mysql.jdbc.Driver";
             dbms = MYSQL_DBMS;
             dbUrl = dbUrl + "?useSSL=false&allowMultiQueries=true&serverTimezone=UTC";
+            timeStampType = "datetime";
         } else {
             throw new UnsupportedOperationException("DBMS " + dbms + " is not supported. " +
                     "You should either provide 'driver' and 'dbUrl' properties, or specify one of supported DBMS in 'dbms' property");
@@ -352,24 +357,24 @@ public abstract class CubaDbTask extends DefaultTask {
 
     protected Properties initProperties() {
         String propsConfigName = getPropsConfigName();
-       // if (propsConfigName == null)
-       //     throw new IllegalStateException(APP_PROPS_CONFIG_PARAM + " servlet context parameter not defined");
-
-        final Properties properties = new Properties();
+        Properties properties = new Properties();
 
         StringTokenizer tokenizer = new StringTokenizer(propsConfigName);
         tokenizer.setQuoteChar('"');
         for (String str : tokenizer.getTokenArray()) {
             if (str.startsWith("classpath:")) {
-                try (InputStream stream = getPropertiesInputStream(str)) {
-                    if (stream != null) {
-                        log.info("Loading app properties from {}", str);
-                        BOMInputStream bomInputStream = new BOMInputStream(stream);
-                        try (Reader reader = new InputStreamReader(bomInputStream, StandardCharsets.UTF_8)) {
-                            properties.load(reader);
-                        }
-                    } else {
-                        log.trace("Resource {} not found, ignore it", str);
+                str = str.replace("classpath:", "");
+                str = "modules/core/src/".concat(str);
+                File props = new File(str);
+                if (!props.exists()) {
+                    log.trace("Resource {} not found, ignore it", str);
+                    break;
+                }
+                try (InputStream stream = new FileInputStream(props)) {
+                    log.info("Loading app properties from {}", str);
+                    BOMInputStream bomInputStream = new BOMInputStream(stream);
+                    try (Reader reader = new InputStreamReader(bomInputStream, StandardCharsets.UTF_8)) {
+                        properties.load(reader);
                     }
                 } catch (IOException e) {
                     throw new RuntimeException("Unable to read properties from stream", e);
@@ -377,14 +382,6 @@ public abstract class CubaDbTask extends DefaultTask {
             }
         }
         return properties;
-    }
-
-    protected InputStream getPropertiesInputStream(String classpath) {
-        File jarFolder = new File("text_directory");
-
-        File [] jarFiles = jarFolder.listFiles(file -> file.getName().endsWith(".jar"));
-
-        return null;
     }
 
     protected String getPropsConfigName() {
@@ -410,22 +407,6 @@ public abstract class CubaDbTask extends DefaultTask {
             }
         }
         return null;
-    }
-
-    protected boolean isUrl(@Nullable String resourceLocation) {
-        if (resourceLocation == null) {
-            return false;
-        }
-        if (resourceLocation.startsWith("classpath:")) {
-            return true;
-        }
-        try {
-            new URL(resourceLocation);
-            return true;
-        }
-        catch (MalformedURLException ex) {
-            return false;
-        }
     }
 
     protected String getScriptName(File file) {
