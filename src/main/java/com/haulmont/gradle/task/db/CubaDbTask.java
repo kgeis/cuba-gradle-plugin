@@ -46,12 +46,10 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
-import javax.annotation.Nullable;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public abstract class CubaDbTask extends DefaultTask {
@@ -128,6 +126,9 @@ public abstract class CubaDbTask extends DefaultTask {
     }
 
     public void setConnectionParams(String connectionParams) {
+        if (connectionParams == null) {
+            connectionParams = "";
+        }
         this.connectionParams = connectionParams;
     }
 
