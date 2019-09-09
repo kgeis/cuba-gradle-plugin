@@ -542,11 +542,11 @@ public abstract class CubaDbTask extends DefaultTask {
         }
 
         protected String getInitDirName() {
-            return "init";
+            return Stores.MAIN.equals(storeName) ? "init" : "init_" + storeName.toLowerCase(Locale.ROOT);
         }
 
         protected String getUpdateDirName() {
-            return "update";
+            return Stores.MAIN.equals(storeName) ? "update" : "update_" + storeName.toLowerCase(Locale.ROOT);
         }
     }
 
