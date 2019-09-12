@@ -208,6 +208,10 @@ public abstract class CubaDbTask extends DefaultTask {
         Project project = getProject();
         dbDir = new File(project.getBuildDir(), dbFolder);
 
+        initDriverClasspath(project);
+    }
+
+    protected void initDriverClasspath(Project project) {
         ClassLoader classLoader = GroovyObject.class.getClassLoader();
         if (StringUtils.isBlank(driverClasspath)) {
             driverClasspath = project.getConfigurations().getByName("jdbc").fileCollection(dependency -> true).getAsPath();
@@ -238,52 +242,11 @@ public abstract class CubaDbTask extends DefaultTask {
             }
         }
         project.getLogger().info("[CubaDbTask] driverClasspath: " + driverClasspath);
-
     }
 
     protected void initDefaultDataSource() {
         if (StringUtils.isBlank(driver) || StringUtils.isBlank(dbUrl)) {
-            if (POSTGRES_DBMS.equals(dbms)) {
-                driver = "org.postgresql.Driver";
-                dbUrl = "jdbc:postgresql://" + host + "/" + dbName + connectionParams;
-                if (StringUtils.isBlank(timeStampType)) {
-                    timeStampType = "timestamp";
-                }
-            } else if (MSSQL_DBMS.equals(dbms)) {
-                if (MS_SQL_2005.equals(dbmsVersion)) {
-                    driver = "net.sourceforge.jtds.jdbc.Driver";
-                    dbUrl = "jdbc:jtds:sqlserver://" + host + "/" + dbName + connectionParams;
-                } else {
-                    driver = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
-                    dbUrl = "jdbc:sqlserver://" + host + ";databaseName=" + dbName + connectionParams;
-                }
-                if (StringUtils.isBlank(timeStampType)) {
-                    timeStampType = "datetime";
-                }
-            } else if (ORACLE_DBMS.equals(dbms)) {
-                driver = "oracle.jdbc.OracleDriver";
-                dbUrl = "jdbc:oracle:thin:@//" + host + "/" + dbName + connectionParams;
-                if (StringUtils.isBlank(timeStampType)) {
-                    timeStampType = "timestamp";
-                }
-            } else if (HSQL_DBMS.equals(dbms)) {
-                driver = "org.hsqldb.jdbc.JDBCDriver";
-                dbUrl = "jdbc:hsqldb:hsql://" + host + "/" + dbName + connectionParams;
-                if (StringUtils.isBlank(timeStampType)) {
-                    timeStampType = "timestamp";
-                }
-            } else if (MYSQL_DBMS.equals(dbms)) {
-                driver = "com.mysql.jdbc.Driver";
-                if (StringUtils.isBlank(connectionParams)) {
-                    connectionParams = "?useSSL=false&allowMultiQueries=true&serverTimezone=UTC";
-                }
-                dbUrl = "jdbc:mysql://" + host + "/" + dbName + connectionParams;
-                if (StringUtils.isBlank(timeStampType)) {
-                    timeStampType = "datetime";
-                }
-            } else
-                throw new UnsupportedOperationException("DBMS " + dbms + " is not supported. " +
-                        "You should either provide 'driver' and 'dbUrl' properties, or specify one of supported DBMS in 'dbms' property");
+            initDataSource();
         }
     }
 
@@ -292,7 +255,61 @@ public abstract class CubaDbTask extends DefaultTask {
         dbUser = properties.getProperty("cuba.dataSource.username");
         dbPassword = properties.getProperty("cuba.dataSource.password");
         dbName = properties.getProperty("cuba.dataSource.dbName");
+        host = properties.getProperty("cuba.dataSource.host") + ":" + properties.getProperty("cuba.dataSource.port");
+        connectionParams = properties.getProperty("cuba.dataSource.connectionParams");
 
+        if (dbUrl != null) {
+            initDataSourceByUrl();
+        } else {
+            initDataSource();
+        }
+    }
+
+    protected void initDataSource() {
+        if (POSTGRES_DBMS.equals(dbms)) {
+            driver = "org.postgresql.Driver";
+            dbUrl = "jdbc:postgresql://" + host + "/" + dbName + connectionParams;
+            if (StringUtils.isBlank(timeStampType)) {
+                timeStampType = "timestamp";
+            }
+        } else if (MSSQL_DBMS.equals(dbms)) {
+            if (MS_SQL_2005.equals(dbmsVersion)) {
+                driver = "net.sourceforge.jtds.jdbc.Driver";
+                dbUrl = "jdbc:jtds:sqlserver://" + host + "/" + dbName + connectionParams;
+            } else {
+                driver = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
+                dbUrl = "jdbc:sqlserver://" + host + ";databaseName=" + dbName + connectionParams;
+            }
+            if (StringUtils.isBlank(timeStampType)) {
+                timeStampType = "datetime";
+            }
+        } else if (ORACLE_DBMS.equals(dbms)) {
+            driver = "oracle.jdbc.OracleDriver";
+            dbUrl = "jdbc:oracle:thin:@//" + host + "/" + dbName + connectionParams;
+            if (StringUtils.isBlank(timeStampType)) {
+                timeStampType = "timestamp";
+            }
+        } else if (HSQL_DBMS.equals(dbms)) {
+            driver = "org.hsqldb.jdbc.JDBCDriver";
+            dbUrl = "jdbc:hsqldb:hsql://" + host + "/" + dbName + connectionParams;
+            if (StringUtils.isBlank(timeStampType)) {
+                timeStampType = "timestamp";
+            }
+        } else if (MYSQL_DBMS.equals(dbms)) {
+            driver = "com.mysql.jdbc.Driver";
+            if (StringUtils.isBlank(connectionParams)) {
+                connectionParams = "?useSSL=false&allowMultiQueries=true&serverTimezone=UTC";
+            }
+            dbUrl = "jdbc:mysql://" + host + "/" + dbName + connectionParams;
+            if (StringUtils.isBlank(timeStampType)) {
+                timeStampType = "datetime";
+            }
+        } else
+            throw new UnsupportedOperationException("DBMS " + dbms + " is not supported. " +
+                    "You should either provide 'driver' and 'dbUrl' properties, or specify one of supported DBMS in 'dbms' property");
+    }
+
+    protected void initDataSourceByUrl() {
         if (dbUrl.contains("jdbc:postgresql://")) {
             driver = "org.postgresql.Driver";
             dbms = POSTGRES_DBMS;
