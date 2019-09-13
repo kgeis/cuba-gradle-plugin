@@ -36,7 +36,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.*;
-import org.apache.commons.text.StringSubstitutor;
 import org.apache.commons.text.StringTokenizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -199,7 +198,7 @@ public abstract class CubaDbTask extends DefaultTask {
     protected void init() {
         Properties properties = initProperties();
         String dataSourceProvider = properties.getProperty("cuba.dataSourceProvider");
-        if ("APPLICATION".equals(dataSourceProvider)) {
+        if ("application".equals(dataSourceProvider)) {
             initApplicationDataSource(properties);
         } else {
             initDefaultDataSource();
@@ -256,7 +255,8 @@ public abstract class CubaDbTask extends DefaultTask {
         dbPassword = properties.getProperty("cuba.dataSource.password");
         dbName = properties.getProperty("cuba.dataSource.dbName");
         host = properties.getProperty("cuba.dataSource.host") + ":" + properties.getProperty("cuba.dataSource.port");
-        connectionParams = properties.getProperty("cuba.dataSource.connectionParams");
+        connectionParams = properties.getProperty("cuba.dataSource.connectionParams") == null ?
+        "" : properties.getProperty("cuba.dataSource.connectionParams");
 
         if (dbUrl != null) {
             initDataSourceByUrl();
@@ -382,9 +382,12 @@ public abstract class CubaDbTask extends DefaultTask {
         for (String str : tokenizer.getTokenArray()) {
             if (str.startsWith("classpath:")) {
                 str = str.replace("classpath:", "");
-                str = "modules/core/src/".concat(str);
-                File props = new File(str);
-                if (!props.exists()) {
+                String[] paths = str.split("/");
+                String propertiesFileName = paths[paths.length-1];
+
+                File props = getFileByNameRecursievly(getProject().getProjectDir(), propertiesFileName);
+
+                if (props == null || !props.exists()) {
                     log.trace("Resource {} not found, ignore it", str);
                     break;
                 }
@@ -409,8 +412,9 @@ public abstract class CubaDbTask extends DefaultTask {
         Document document;
         try {
             builder = factory.newDocumentBuilder();
-            String webXml = "modules/core/web/WEB-INF/web.xml";
-            document = builder.parse(new File(StringSubstitutor.replaceSystemProperties(webXml)));
+
+            File webXmlFile = getFileByNameRecursievly(getProject().getProjectDir(), "web.xml");
+            document = builder.parse(webXmlFile);
         } catch (SAXException | ParserConfigurationException | IOException e) {
             throw new RuntimeException("Can't get properties files names from core web.xml", e);
         }
@@ -423,6 +427,16 @@ public abstract class CubaDbTask extends DefaultTask {
             if ("appPropertiesConfig".equals(nodeValue)) {
                 return nNode.getElementsByTagName("param-value").item(0).getTextContent();
             }
+        }
+        return null;
+    }
+
+    protected File getFileByNameRecursievly(File parentFile, String fileName) {
+        Collection files = FileUtils.listFiles(parentFile, null, true);
+        for (Object f : files) {
+            File file = (File) f;
+            if (file.getName().equals(fileName))
+                return file;
         }
         return null;
     }
